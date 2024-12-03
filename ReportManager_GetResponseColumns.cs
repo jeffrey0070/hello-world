@@ -67,6 +67,29 @@ public partial class ReportManager
     /// When `multiSubject` or `multiContext`, and `slaveProject` is not null (master project ID="3fd631d8-0b5a-4d75-be1a-5b500cc1c90c", slave project ID="0ab7516e-f492-4bc6-9bf4-56fb106e1ab8"):
     /// <c>"Q5Row1,Q1Row1,UserPrincipal,SubjectID,ConditionID,SourceID,FilledBy,Saved,FilloutDate,InvitationDate,Submitted,TaskID,AutoKey"</c>.
     /// </param>
+    /// <remarks>
+    /// The behavior of the method depends on the following cases:
+    /// 1. When not multiSubject and not multiContext, and slaveProject is null:
+    ///    - There is only one response table which is [MasterProjectID].
+    ///    cols: <c>"[9c3bae72-8902-45a5-a520-13f4532eb106].Q3Row1,[9c3bae72-8902-45a5-a520-13f4532eb106].Q4Row1,[9c3bae72-8902-45a5-a520-13f4532eb106].UserPrincipal,[9c3bae72-8902-45a5-a520-13f4532eb106].SubjectID,[9c3bae72-8902-45a5-a520-13f4532eb106].ConditionID,[9c3bae72-8902-45a5-a520-13f4532eb106].SourceID,[9c3bae72-8902-45a5-a520-13f4532eb106].FilledBy,[9c3bae72-8902-45a5-a520-13f4532eb106].Saved,[9c3bae72-8902-45a5-a520-13f4532eb106].FilloutDate,[9c3bae72-8902-45a5-a520-13f4532eb106].InvitationDate,[9c3bae72-8902-45a5-a520-13f4532eb106].Submitted,[9c3bae72-8902-45a5-a520-13f4532eb106].TaskID,[9c3bae72-8902-45a5-a520-13f4532eb106].AutoKey"</c>.
+    ///    combCols: <c>""</c>.
+    ///    colAlias: <c>"Q3Row1,Q4Row1,UserPrincipal,SubjectID,ConditionID,SourceID,FilledBy,Saved,FilloutDate,InvitationDate,Submitted,TaskID,AutoKey"</c>.
+    /// 2. When not multiSubject and not multiContext, and slaveProject is not null:
+    ///    - There is only one response table which is [SlaveProjectID].
+    ///    cols: <c>"[6ca3871a-2411-4c31-923a-9184ec1d1892].Q5Row1 AS Q3Row1,CAST (NULL AS NVARCHAR(MAX)) AS Q4Row1,[6ca3871a-2411-4c31-923a-9184ec1d1892].UserPrincipal,[6ca3871a-2411-4c31-923a-9184ec1d1892].SubjectID,[6ca3871a-2411-4c31-923a-9184ec1d1892].ConditionID,[6ca3871a-2411-4c31-923a-9184ec1d1892].SourceID,[6ca3871a-2411-4c31-923a-9184ec1d1892].FilledBy,[6ca3871a-2411-4c31-923a-9184ec1d1892].Saved,[6ca3871a-2411-4c31-923a-9184ec1d1892].FilloutDate,[6ca3871a-2411-4c31-923a-9184ec1d1892].InvitationDate,[6ca3871a-2411-4c31-923a-9184ec1d1892].Submitted,[6ca3871a-2411-4c31-923a-9184ec1d1892].TaskID,[6ca3871a-2411-4c31-923a-9184ec1d1892].AutoKey"</c>.
+    ///    combCols: <c>""</c>.
+    ///    colAlias: <c>"Q3Row1,Q4Row1,UserPrincipal,SubjectID,ConditionID,SourceID,FilledBy,Saved,FilloutDate,InvitationDate,Submitted,TaskID,AutoKey"</c>.
+    /// 3. When multiSubject or multiContext, and slaveProject is null:
+    ///    - There are two response tables which are [MasterProjectID] and [MasterProjectIDContextResp]; however, query combinedResp will combine them and produce a single table alias as [MasterProjectID].
+    ///    cols: <c>"[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].Q5Row1,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].Q1Row1,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].UserPrincipal,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].SubjectID,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].ConditionID,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].SourceID,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].FilledBy,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].Saved,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].FilloutDate,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].InvitationDate,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].Submitted,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].TaskID,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].AutoKey"</c>.
+    ///    combCols: <c>"[3fd631d8-0b5a-4d75-be1a-5b500cc1c90cContextResp].Q5Row1 AS Q5Row1,[3fd631d8-0b5a-4d75-be1a-5b500cc1c90c].Q1Row1 AS Q1Row1"</c>.
+    ///    colAlias: <c>"Q5Row1,Q1Row1,UserPrincipal,SubjectID,ConditionID,SourceID,FilledBy,Saved,FilloutDate,InvitationDate,Submitted,TaskID,AutoKey, GroupID,ContextAutoKey,RankingKey , SecondarySubjectFlag "</c>.
+    /// 4. When multiSubject or multiContext, and slaveProject is not null:
+    ///    - There are two response tables which are [SlaveProjectID] and [SlaveProjectIDContextResp]; however, query combinedResp will combine them and produce a single table alias as [SlaveProjectID].
+    ///    cols: <c>"[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].Q1Row1 AS Q5Row1,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].Q2Row1 AS Q1Row1,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].UserPrincipal,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].SubjectID,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].ConditionID,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].SourceID,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].FilledBy,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].Saved,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].FilloutDate,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].InvitationDate,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].Submitted,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].TaskID,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].AutoKey"</c>.
+    ///    combCols: <c>"[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8ContextResp].Q1Row1 AS Q5Row1,[0ab7516e-f492-4bc6-9bf4-56fb106e1ab8].Q2Row1 AS Q1Row1"</c>.
+    ///    colAlias: <c>"Q5Row1,Q1Row1,UserPrincipal,SubjectID,ConditionID,SourceID,FilledBy,Saved,FilloutDate,InvitationDate,Submitted,TaskID,AutoKey"</c>.
+    /// </remarks>
     public void GetResponseColumns(Report report, Project slaveProject, out string cols, out string combCols, out string colAlias)
     {
         var currentProject = slaveProject ?? report.Project;
