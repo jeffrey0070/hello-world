@@ -9,12 +9,19 @@ Param(
     [switch]$dropTargetDb     # Switch to drop target database if it exists
 )
 
-# Prompt for credentials securely
-$credential = Get-Credential -Message "Enter SQL Server credentials"
+# Display introductory message
+Write-Host "This script copies a SQL Server database."
+Write-Host "You can change the SQL Server instance name, username, and password in the script."
+Write-Host "Usage: .\Copy-Database-2022.ps1 -sourceDbName <SourceDatabaseName> -targetDbName <TargetDatabaseName> [-dropTargetDb]"
+Write-Host "Parameters:"
+Write-Host "`t-sourceDbName: Name of the source database to be copied."
+Write-Host "`t-targetDbName: Name for the new copied database."
+Write-Host "`t-dropTargetDb (Optional): Drop the target database if it exists."
 
-# Extract username and password
-$username = $credential.UserName
-$password = $credential.GetNetworkCredential().Password
+# Define SQL Server instance name, username, and password
+$serverName = "ex-jwang"    # Replace with your SQL Server instance name
+$username = "sa"            # Replace with your SQL Server username
+$password = "blue"          # Replace with your SQL Server password
 
 # Try to import the SqlServer module
 if (-not (Get-Module -Name SqlServer)) {
@@ -53,17 +60,14 @@ if (-not ("Microsoft.SqlServer.Management.Smo.Server" -as [type])) {
     }
 }
 
-# Define the SQL Server instance name
-$serverName = "ex-jwang"    # Replace with your SQL Server instance name
-
-# Create a server object with error handling
+# Test SQL Server connection
 try {
     $server = New-Object Microsoft.SqlServer.Management.Smo.Server $serverName
-
-    # Configure SQL Server Authentication
     $server.ConnectionContext.LoginSecure = $false
     $server.ConnectionContext.Login = $username
     $server.ConnectionContext.Password = $password
+    $server.ConnectionContext.Connect()
+    Write-Host "Successfully connected to SQL Server instance '$serverName'."
 } catch {
     Write-Host "Failed to connect to SQL Server instance '$serverName'. Error: $_" -ForegroundColor Red
     exit
