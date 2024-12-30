@@ -21,16 +21,19 @@
     - Ensure you have the required permissions on the target SQL Server instance.
 
 .EXAMPLE
-    .\Copy-Database-2022.ps1 -sourceDbName db1 -targetDbName db2
+    .\Copy-Database.ps1 -sourceDbName db1 -targetDbName db2
 #>
 
+param (
+    [string]$sourceDbName,
+    [string]$targetDbName
+)
+
 Write-Host "--------------------------------------------------------"
-Write-Host " Welcome to the Copy-Database-2022 script!"
+Write-Host " Welcome to the Copy-Database script!"
 Write-Host " This script copies a SQL Server database to a new name."
-Write-Host " You can change the SQL Server instance name, username,"
-Write-Host " and password in the script."
-Write-Host " Usage: .\Copy-Database-2022.ps1 -sourceDbName <SourceDatabase>"
-Write-Host "        -targetDbName <TargetDatabase>"
+Write-Host " You can change the SQL Server instance name, username, and password in the script."
+Write-Host " Usage: .\Copy-Database.ps1 -sourceDbName <SourceDatabase> -targetDbName <TargetDatabase>"
 Write-Host "--------------------------------------------------------"
 Write-Host ""
 
@@ -84,8 +87,21 @@ try {
         Write-Host "Source database '$sourceDbName' does not exist. Exiting script."
         exit
     }
+    
+    # 2) Get the physical file names for the source database
+    $fileQuery = "
+        SELECT physical_name
+        FROM sys.master_files
+        WHERE database_id = db_id('$sourceDbName');
+    "
+    $fileNames = Invoke-Sqlcmd -ConnectionString $connectionString -Query $fileQuery
 
-    # 2) Check if target DB exists
+    $sourceMdf = $fileNames | Where-Object { $_.physical_name -like "*.mdf" } | Select-Object -ExpandProperty physical_name
+    $sourceLdf = $fileNames | Where-Object { $_.physical_name -like "*.ldf" } | Select-Object -ExpandProperty physical_name
+    $targetMdf = $sourceMdf -replace [regex]::Escape($sourceDbName), $targetDbName
+    $targetLdf = $sourceLdf -replace [regex]::Escape($sourceDbName), $targetDbName
+
+    # 3) Check if target DB exists
     $checkDbQuery = "
         SELECT CASE WHEN db_id('$targetDbName') IS NOT NULL THEN 1 ELSE 0 END AS ExistsFlag;
     "
@@ -108,7 +124,7 @@ try {
         }
     }
 
-    # 3) Detach the source database
+    # 4) Detach the source database
     Write-Host "Detaching source database '$sourceDbName'..."
     Invoke-Sqlcmd -ConnectionString $connectionString -Query "
         ALTER DATABASE [$sourceDbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
@@ -117,19 +133,13 @@ try {
     Write-Host "Detached source database '$sourceDbName'."
     $sourceDetached = $true
 
-    # 4) Copy .mdf/.ldf files - adjust these paths to match your environment
-    $dataPath  = "C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\DATA"
-    $sourceMdf = Join-Path $dataPath "$sourceDbName.mdf"
-    $sourceLdf = Join-Path $dataPath ($sourceDbName + "_log.ldf")
-    $targetMdf = Join-Path $dataPath "$targetDbName.mdf"
-    $targetLdf = Join-Path $dataPath ($targetDbName + "_log.ldf")
-
+    # 5) Copy the database files to create the target database
     Write-Host "Copying database files to create '$targetDbName'..."
     Copy-Item -Path $sourceMdf -Destination $targetMdf -Force
     Copy-Item -Path $sourceLdf -Destination $targetLdf -Force
     Write-Host "Copied database files for '$targetDbName'."
 
-    # 5) Attach the newly copied database
+    # 6) Attach the newly copied database
     Write-Host "Attaching target database '$targetDbName'..."
     Invoke-Sqlcmd -ConnectionString $connectionString -Query "
         CREATE DATABASE [$targetDbName]
