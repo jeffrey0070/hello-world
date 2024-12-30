@@ -43,28 +43,12 @@ if (-not (Get-Module -ListAvailable -Name SqlServer)) {
 # Import the SqlServer module
 Import-Module SqlServer -ErrorAction SilentlyContinue
 
-# Prompt for required parameters
-if (-not $sourceDbName) {
-    $sourceDbName = Read-Host "Enter the source database name"
-}
-
-if (-not $targetDbName) {
-    $targetDbName = Read-Host "Enter the target database name"
-}
-
-Write-Host "Source database: $sourceDbName"
-Write-Host "Target database: $targetDbName"
-Write-Host "--------------------------------------------------------"
-
 # Set your SQL Server instance name and credentials
 $instanceName = "ex-jwang"
 $username     = "sa"
 $password     = "blue"
 
 Write-Host "Attempting to connect to SQL Server instance '$instanceName'..."
-
-# Import the SqlServer module (if you haven't already)
-Import-Module SqlServer -ErrorAction SilentlyContinue
 
 # Build the connection string
 $connectionString = "Server=$instanceName;Database=master;User ID=$username;Password=$password;Encrypt=True;TrustServerCertificate=True"
@@ -78,8 +62,30 @@ try {
     exit
 }
 
+# Prompt for required parameters
+if (-not $sourceDbName) {
+    $sourceDbName = Read-Host "Enter the source database name"
+}
+
+if (-not $targetDbName) {
+    $targetDbName = Read-Host "Enter the target database name"
+}
+
+$sourceDetached = $false
 try {
-    # 1) Check if target DB exists
+    # 1) Check if source DB exists
+    $checkDbQuery = "
+        SELECT CASE WHEN db_id('$sourceDbName') IS NOT NULL THEN 1 ELSE 0 END AS ExistsFlag;
+    "
+    $sourceExists = Invoke-Sqlcmd -ConnectionString $connectionString -Query $checkDbQuery |
+        Select-Object -ExpandProperty ExistsFlag
+
+    if ($sourceExists -eq 0) {
+        Write-Host "Source database '$sourceDbName' does not exist. Exiting script."
+        exit
+    }
+
+    # 2) Check if target DB exists
     $checkDbQuery = "
         SELECT CASE WHEN db_id('$targetDbName') IS NOT NULL THEN 1 ELSE 0 END AS ExistsFlag;
     "
@@ -102,15 +108,16 @@ try {
         }
     }
 
-    # 2) Detach the source database
+    # 3) Detach the source database
     Write-Host "Detaching source database '$sourceDbName'..."
     Invoke-Sqlcmd -ConnectionString $connectionString -Query "
         ALTER DATABASE [$sourceDbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
         EXEC sp_detach_db [$sourceDbName];
     "
     Write-Host "Detached source database '$sourceDbName'."
+    $sourceDetached = $true
 
-    # 3) Copy .mdf/.ldf files - adjust these paths to match your environment
+    # 4) Copy .mdf/.ldf files - adjust these paths to match your environment
     $dataPath  = "C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\DATA"
     $sourceMdf = Join-Path $dataPath "$sourceDbName.mdf"
     $sourceLdf = Join-Path $dataPath ($sourceDbName + "_log.ldf")
@@ -122,7 +129,7 @@ try {
     Copy-Item -Path $sourceLdf -Destination $targetLdf -Force
     Write-Host "Copied database files for '$targetDbName'."
 
-    # 4) Attach the newly copied database
+    # 5) Attach the newly copied database
     Write-Host "Attaching target database '$targetDbName'..."
     Invoke-Sqlcmd -ConnectionString $connectionString -Query "
         CREATE DATABASE [$targetDbName]
@@ -140,30 +147,25 @@ catch {
     Write-Host $_.Exception.Message
 }
 finally {
-    # Ensure the source database is re-attached
-    try {
-        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
-            CREATE DATABASE [$sourceDbName]
-            ON (FILENAME = N'$sourceMdf'),
-               (FILENAME = N'$sourceLdf')
-            FOR ATTACH;
-        " -ErrorAction SilentlyContinue
-        Write-Host "Ensured source database '$sourceDbName' is re-attached."
-    } catch {
-        Write-Host "Failed to re-attach source database '$sourceDbName'."
+    if ($sourceDetached) {
+        # Ensure the source database is re-attached
+        try {
+            Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+                CREATE DATABASE [$sourceDbName]
+                ON (FILENAME = N'$sourceMdf'),
+                   (FILENAME = N'$sourceLdf')
+                FOR ATTACH;
+            " -ErrorAction SilentlyContinue
+            Write-Host "Ensured source database '$sourceDbName' is re-attached."
+        } catch {
+            Write-Host "Failed to re-attach source database '$sourceDbName'."
+        }
+
+        # Attempt to set the source DB to multi-user
+        try {
+            Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+                ALTER DATABASE [$sourceDbName] SET MULTI_USER;
+            " -ErrorAction SilentlyContinue
+        } catch {}
     }
-
-    # Attempt to set the source DB to multi-user
-    try {
-        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
-            ALTER DATABASE [$sourceDbName] SET MULTI_USER;
-        " -ErrorAction SilentlyContinue
-    } catch {}
-
-    # Attempt to set the target DB to multi-user
-    try {
-        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
-            ALTER DATABASE [$targetDbName] SET MULTI_USER;
-        " -ErrorAction SilentlyContinue
-    } catch {}
 }
