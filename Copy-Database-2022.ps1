@@ -1,184 +1,163 @@
-# Define parameters
-Param(
-    [Parameter(Mandatory = $true)]
-    [string]$sourceDbName,   # Name of the source database
+<#
+.SYNOPSIS
+    This script copies a SQL Server database.
 
-    [Parameter(Mandatory = $true)]
-    [string]$targetDbName,   # Name for the new copied database
+.DESCRIPTION
+    1. Displays an introduction message first.
+    2. Prompts for the source and target database names, as well as optional parameter to drop the target database if it exists.
+    3. Connects to a specified SQL Server instance using the provided credentials.
+    4. Detaches the source DB, copies its data files, then reattaches both source and target DBs.
 
-    [switch]$dropTargetDb     # Switch to drop target database if it exists
-)
+.PARAMETER sourceDbName
+    The name of the source database to copy.
 
-# Display introductory message
-Write-Host "This script copies a SQL Server database."
-Write-Host "You can change the SQL Server instance name, username, and password in the script."
-Write-Host "Usage: .\Copy-Database-2022.ps1 -sourceDbName <SourceDatabaseName> -targetDbName <TargetDatabaseName> [-dropTargetDb]"
-Write-Host "Parameters:"
-Write-Host "`t-sourceDbName: Name of the source database to be copied."
-Write-Host "`t-targetDbName: Name for the new copied database."
-Write-Host "`t-dropTargetDb (Optional): Drop the target database if it exists."
+.PARAMETER targetDbName
+    The name of the new copied database.
 
-# Define SQL Server instance name, username, and password
-$serverName = "ex-jwang"    # Replace with your SQL Server instance name
-$username = "sa"            # Replace with your SQL Server username
-$password = "blue"          # Replace with your SQL Server password
+.PARAMETER dropTargetDb
+    Optional switch to drop the target database if it already exists.
 
-# Try to import the SqlServer module
-if (-not (Get-Module -Name SqlServer)) {
-    try {
-        Import-Module SqlServer -ErrorAction Stop
-    } catch {
-        Write-Host "The 'SqlServer' module is not installed. Installing it now..."
-        Install-Module -Name SqlServer -Scope CurrentUser -Force -AllowClobber
-        Import-Module SqlServer
-    }
+.NOTES
+    - Update $instanceName, $username, and $password placeholders in the script.
+    - Requires the SqlServer PowerShell module.
+    - Ensure you have the required permissions on the target SQL Server instance.
+
+.EXAMPLE
+    .\Copy-Database-2022.ps1 -sourceDbName db1 -targetDbName db2 -dropTargetDb
+#>
+
+Write-Host "--------------------------------------------------------"
+Write-Host " Welcome to the Copy-Database-2022 script!"
+Write-Host " This script copies a SQL Server database to a new name."
+Write-Host " You can change the SQL Server instance name, username,"
+Write-Host " and password in the script."
+Write-Host " Usage: .\Copy-Database-2022.ps1 -sourceDbName <SourceDatabase>"
+Write-Host "        -targetDbName <TargetDatabase> [-dropTargetDb]"
+Write-Host "--------------------------------------------------------"
+Write-Host ""
+
+# -- Remove [CmdletBinding()] and use simple parameter logic --
+# Prompt for required parameters. If you intend to pass them on the command line,
+# you'll need additional checks to handle that scenario.
+
+if (-not $sourceDbName) {
+    $sourceDbName = Read-Host "Enter the source database name"
 }
 
-# Verify that the SMO assembly is loaded
-if (-not ("Microsoft.SqlServer.Management.Smo.Server" -as [type])) {
-    Write-Host "Loading SMO assemblies..."
-    $assemblyPaths = @(
-        "${env:ProgramFiles(x86)}\Microsoft SQL Server\190\SDK\Assemblies\Microsoft.SqlServer.Smo.dll",
-        "${env:ProgramFiles}\Microsoft SQL Server\190\SDK\Assemblies\Microsoft.SqlServer.Smo.dll"
-    )
-    $assemblyLoaded = $false
-    foreach ($assemblyPath in $assemblyPaths) {
-        if (Test-Path $assemblyPath) {
-            try {
-                Add-Type -Path $assemblyPath -ErrorAction Stop
-                $assemblyLoaded = $true
-                Write-Host "Loaded SMO assembly from path: $assemblyPath"
-                break
-            } catch {
-                Write-Host "Failed to load SMO assembly from path: $assemblyPath" -ForegroundColor Yellow
-            }
-        }
-    }
-    if (-not $assemblyLoaded) {
-        Write-Host "SMO assemblies not found. Please ensure SMO is installed for SQL Server 2022." -ForegroundColor Red
-        exit
-    }
+if (-not $targetDbName) {
+    $targetDbName = Read-Host "Enter the target database name"
 }
 
-# Test SQL Server connection
+# For the optional dropTargetDb parameter, just handle with a prompt or standard variable
+if (-not $dropTargetDb) {
+    $userResponse = Read-Host "Drop the target DB if it exists? (Y/N)"
+    $dropTargetDb = $userResponse -eq 'Y'
+}
+
+Write-Host "Source database: $sourceDbName"
+Write-Host "Target database: $targetDbName"
+if ($dropTargetDb) {
+    Write-Host "The target database will be dropped if it already exists."
+}
+Write-Host "--------------------------------------------------------"
+
+# Set your SQL Server instance name and credentials
+$instanceName = "ex-jwang"
+$username     = "sa"
+$password     = "blue"
+
+Write-Host "Source database: $sourceDbName"
+Write-Host "Target database: $targetDbName"
+if ($dropTargetDb) {
+    Write-Host "The script will drop the target database if it already exists."
+}
+Write-Host "--------------------------------------------------------"
+
+# Import the SqlServer module (if you haven't already)
+Import-Module SqlServer -ErrorAction SilentlyContinue
+
+Write-Host "Attempting to connect to SQL Server instance '$instanceName'..."
+
+# Build the connection string
+$connectionString = "Server=$instanceName;Database=master;User ID=$username;Password=$password;Encrypt=True;TrustServerCertificate=True"
+
 try {
-    $server = New-Object Microsoft.SqlServer.Management.Smo.Server $serverName
-    $server.ConnectionContext.LoginSecure = $false
-    $server.ConnectionContext.Login = $username
-    $server.ConnectionContext.Password = $password
-    $server.ConnectionContext.Connect()
-    Write-Host "Successfully connected to SQL Server instance '$serverName'."
-} catch {
-    Write-Host "Failed to connect to SQL Server instance '$serverName'. Error: $_" -ForegroundColor Red
-    exit
-}
+    # 1) Check if target DB exists
+    $checkDbQuery = "
+        SELECT CASE WHEN db_id('$targetDbName') IS NOT NULL THEN 1 ELSE 0 END AS ExistsFlag;
+    "
+    $targetExists = Invoke-Sqlcmd -ConnectionString $connectionString -Query $checkDbQuery |
+        Select-Object -ExpandProperty ExistsFlag
 
-# Check if source database exists
-$sourceDb = $server.Databases[$sourceDbName]
-if ($sourceDb -eq $null) {
-    Write-Host "Source database '$sourceDbName' does not exist." -ForegroundColor Red
-    exit
-}
-
-# Check if target database exists
-$targetDb = $server.Databases[$targetDbName]
-if ($targetDb -ne $null) {
-    if ($dropTargetDb.IsPresent) {
-        try {
-            Write-Host "Dropping existing target database '$targetDbName'..."
-            $server.KillAllProcesses($targetDbName)
-            $targetDb.Drop()
-            Write-Host "Dropped target database '$targetDbName'."
-        } catch {
-            Write-Host "Failed to drop target database '$targetDbName'. Error: $_" -ForegroundColor Red
-            exit
-        }
-    } else {
-        Write-Host "Target database '$targetDbName' already exists." -ForegroundColor Yellow
-        # Prompt the user for input
-        $userInput = Read-Host "Do you want to drop the existing database and proceed? (Y/N)"
-        if ($userInput -eq "Y" -or $userInput -eq "y") {
-            try {
-                Write-Host "Dropping existing target database '$targetDbName'..."
-                $server.KillAllProcesses($targetDbName)
-                $targetDb.Drop()
-                Write-Host "Dropped target database '$targetDbName'."
-            } catch {
-                Write-Host "Failed to drop target database '$targetDbName'. Error: $_" -ForegroundColor Red
-                exit
-            }
-        } else {
-            Write-Host "Operation cancelled. The target database already exists." -ForegroundColor Yellow
-            exit
-        }
+    if ($targetExists -eq 1 -and $dropTargetDb) {
+        Write-Host "Target database '$targetDbName' already exists."
+        Write-Host "Dropping existing target database '$targetDbName'..."
+        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+            ALTER DATABASE [$targetDbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+            DROP DATABASE [$targetDbName];
+        "
+        Write-Host "Dropped target database '$targetDbName'."
     }
-}
 
-# Get file paths of the source database
-$dataFile = $sourceDb.FileGroups[0].Files[0].FileName
-$logFile = $sourceDb.LogFiles[0].FileName
-
-# Define new file names for the target database
-$targetDataFile = [IO.Path]::Combine([IO.Path]::GetDirectoryName($dataFile), "$targetDbName.mdf")
-$targetLogFile = [IO.Path]::Combine([IO.Path]::GetDirectoryName($logFile), "$targetDbName.ldf")
-
-# Detach the source database with error handling
-try {
+    # 2) Detach the source database
     Write-Host "Detaching source database '$sourceDbName'..."
-    $server.KillAllProcesses($sourceDbName)
-    $server.DetachDatabase($sourceDbName, $false)
+    Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+        ALTER DATABASE [$sourceDbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+        EXEC sp_detach_db [$sourceDbName];
+    "
     Write-Host "Detached source database '$sourceDbName'."
-} catch {
-    Write-Host "Failed to detach source database '$sourceDbName'. Error: $_" -ForegroundColor Red
-    exit
-}
 
-# Copy the database files with error handling
-try {
+    # 3) Copy .mdf/.ldf files - adjust these paths to match your environment
+    $dataPath  = "C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\DATA"
+    $sourceMdf = Join-Path $dataPath "$sourceDbName.mdf"
+    $sourceLdf = Join-Path $dataPath ($sourceDbName + "_log.ldf")
+    $targetMdf = Join-Path $dataPath "$targetDbName.mdf"
+    $targetLdf = Join-Path $dataPath ($targetDbName + "_log.ldf")
+
     Write-Host "Copying database files to create '$targetDbName'..."
-    Copy-Item -Path $dataFile -Destination $targetDataFile -Force
-    Copy-Item -Path $logFile -Destination $targetLogFile -Force
+    Copy-Item -Path $sourceMdf -Destination $targetMdf -Force
+    Copy-Item -Path $sourceLdf -Destination $targetLdf -Force
     Write-Host "Copied database files for '$targetDbName'."
-} catch {
-    Write-Host "Failed to copy database files. Error: $_" -ForegroundColor Red
-    # Attempt to re-attach the source database before exiting
-    try {
-        Write-Host "Re-attaching source database '$sourceDbName'..."
-        $sourceDbFiles = New-Object System.Collections.Specialized.StringCollection
-        $sourceDbFiles.Add($dataFile)
-        $sourceDbFiles.Add($logFile)
-        $server.AttachDatabase($sourceDbName, $sourceDbFiles)
-        Write-Host "Re-attached source database '$sourceDbName'."
-    } catch {
-        Write-Host "Failed to re-attach source database '$sourceDbName'. Manual intervention may be required. Error: $_" -ForegroundColor Red
-    }
-    exit
-}
 
-# Attach the source database back with error handling
-try {
+    # 4) Reattach the source database
     Write-Host "Attaching source database '$sourceDbName'..."
-    $sourceDbFiles = New-Object System.Collections.Specialized.StringCollection
-    $sourceDbFiles.Add($dataFile)
-    $sourceDbFiles.Add($logFile)
-    $server.AttachDatabase($sourceDbName, $sourceDbFiles)
+    Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+        CREATE DATABASE [$sourceDbName]
+        ON (FILENAME = N'$sourceMdf'),
+           (FILENAME = N'$sourceLdf')
+        FOR ATTACH;
+    "
     Write-Host "Attached source database '$sourceDbName'."
-} catch {
-    Write-Host "Failed to attach source database '$sourceDbName'. Error: $_" -ForegroundColor Red
-    exit
-}
 
-# Attach the target database with error handling
-try {
+    # 5) Attach the newly copied database
     Write-Host "Attaching target database '$targetDbName'..."
-    $targetDbFiles = New-Object System.Collections.Specialized.StringCollection
-    $targetDbFiles.Add($targetDataFile)
-    $targetDbFiles.Add($targetLogFile)
-    $server.AttachDatabase($targetDbName, $targetDbFiles)
+    Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+        CREATE DATABASE [$targetDbName]
+        ON (FILENAME = N'$targetMdf'),
+           (FILENAME = N'$targetLdf')
+        FOR ATTACH;
+    "
     Write-Host "Attached target database '$targetDbName'."
-} catch {
-    Write-Host "Failed to attach target database '$targetDbName'. Error: $_" -ForegroundColor Red
-    exit
-}
 
-Write-Host "Database '$targetDbName' has been successfully created by copying '$sourceDbName'."
+    Write-Host "--------------------------------------------------------"
+    Write-Host "Database '$targetDbName' has been successfully created by copying '$sourceDbName'."
+}
+catch {
+    Write-Host "An error occurred:"
+    Write-Host $_.Exception.Message
+}
+finally {
+    # Attempt to set the source DB to multi-user
+    try {
+        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+            ALTER DATABASE [$sourceDbName] SET MULTI_USER;
+        " -ErrorAction SilentlyContinue
+    } catch {}
+
+    # Attempt to set the target DB to multi-user
+    try {
+        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+            ALTER DATABASE [$targetDbName] SET MULTI_USER;
+        " -ErrorAction SilentlyContinue
+    } catch {}
+}
