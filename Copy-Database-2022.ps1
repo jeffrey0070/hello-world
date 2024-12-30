@@ -4,9 +4,10 @@
 
 .DESCRIPTION
     1. Displays an introduction message first.
-    2. Prompts for the source and target database names, as well as optional parameter to drop the target database if it exists.
-    3. Connects to a specified SQL Server instance using the provided credentials.
-    4. Detaches the source DB, copies its data files, then reattaches both source and target DBs.
+    2. Prompts for the source and target database names.
+    3. Checks if the target database exists and prompts to drop it if it does.
+    4. Connects to a specified SQL Server instance using the provided credentials.
+    5. Detaches the source DB, copies its data files, then reattaches both source and target DBs.
 
 .PARAMETER sourceDbName
     The name of the source database to copy.
@@ -14,16 +15,13 @@
 .PARAMETER targetDbName
     The name of the new copied database.
 
-.PARAMETER dropTargetDb
-    Optional switch to drop the target database if it already exists.
-
 .NOTES
     - Update $instanceName, $username, and $password placeholders in the script.
     - Requires the SqlServer PowerShell module.
     - Ensure you have the required permissions on the target SQL Server instance.
 
 .EXAMPLE
-    .\Copy-Database-2022.ps1 -sourceDbName db1 -targetDbName db2 -dropTargetDb
+    .\Copy-Database-2022.ps1 -sourceDbName db1 -targetDbName db2
 #>
 
 Write-Host "--------------------------------------------------------"
@@ -32,14 +30,11 @@ Write-Host " This script copies a SQL Server database to a new name."
 Write-Host " You can change the SQL Server instance name, username,"
 Write-Host " and password in the script."
 Write-Host " Usage: .\Copy-Database-2022.ps1 -sourceDbName <SourceDatabase>"
-Write-Host "        -targetDbName <TargetDatabase> [-dropTargetDb]"
+Write-Host "        -targetDbName <TargetDatabase>"
 Write-Host "--------------------------------------------------------"
 Write-Host ""
 
-# -- Remove [CmdletBinding()] and use simple parameter logic --
-# Prompt for required parameters. If you intend to pass them on the command line,
-# you'll need additional checks to handle that scenario.
-
+# Prompt for required parameters
 if (-not $sourceDbName) {
     $sourceDbName = Read-Host "Enter the source database name"
 }
@@ -48,17 +43,8 @@ if (-not $targetDbName) {
     $targetDbName = Read-Host "Enter the target database name"
 }
 
-# For the optional dropTargetDb parameter, just handle with a prompt or standard variable
-if (-not $dropTargetDb) {
-    $userResponse = Read-Host "Drop the target DB if it exists? (Y/N)"
-    $dropTargetDb = $userResponse -eq 'Y'
-}
-
 Write-Host "Source database: $sourceDbName"
 Write-Host "Target database: $targetDbName"
-if ($dropTargetDb) {
-    Write-Host "The target database will be dropped if it already exists."
-}
 Write-Host "--------------------------------------------------------"
 
 # Set your SQL Server instance name and credentials
@@ -66,17 +52,10 @@ $instanceName = "ex-jwang"
 $username     = "sa"
 $password     = "blue"
 
-Write-Host "Source database: $sourceDbName"
-Write-Host "Target database: $targetDbName"
-if ($dropTargetDb) {
-    Write-Host "The script will drop the target database if it already exists."
-}
-Write-Host "--------------------------------------------------------"
+Write-Host "Attempting to connect to SQL Server instance '$instanceName'..."
 
 # Import the SqlServer module (if you haven't already)
 Import-Module SqlServer -ErrorAction SilentlyContinue
-
-Write-Host "Attempting to connect to SQL Server instance '$instanceName'..."
 
 # Build the connection string
 $connectionString = "Server=$instanceName;Database=master;User ID=$username;Password=$password;Encrypt=True;TrustServerCertificate=True"
@@ -89,14 +68,20 @@ try {
     $targetExists = Invoke-Sqlcmd -ConnectionString $connectionString -Query $checkDbQuery |
         Select-Object -ExpandProperty ExistsFlag
 
-    if ($targetExists -eq 1 -and $dropTargetDb) {
-        Write-Host "Target database '$targetDbName' already exists."
-        Write-Host "Dropping existing target database '$targetDbName'..."
-        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
-            ALTER DATABASE [$targetDbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-            DROP DATABASE [$targetDbName];
-        "
-        Write-Host "Dropped target database '$targetDbName'."
+    if ($targetExists -eq 1) {
+        # Target database exists, prompt the user
+        $userResponse = Read-Host "Target database '$targetDbName' already exists. Drop the target DB if it exists? (Y/N)"
+        if ($userResponse -eq 'Y') {
+            Write-Host "Dropping existing target database '$targetDbName'..."
+            Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+                ALTER DATABASE [$targetDbName] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                DROP DATABASE [$targetDbName];
+            "
+            Write-Host "Dropped target database '$targetDbName'."
+        } else {
+            Write-Host "Operation cancelled by user."
+            exit
+        }
     }
 
     # 2) Detach the source database
@@ -119,17 +104,7 @@ try {
     Copy-Item -Path $sourceLdf -Destination $targetLdf -Force
     Write-Host "Copied database files for '$targetDbName'."
 
-    # 4) Reattach the source database
-    Write-Host "Attaching source database '$sourceDbName'..."
-    Invoke-Sqlcmd -ConnectionString $connectionString -Query "
-        CREATE DATABASE [$sourceDbName]
-        ON (FILENAME = N'$sourceMdf'),
-           (FILENAME = N'$sourceLdf')
-        FOR ATTACH;
-    "
-    Write-Host "Attached source database '$sourceDbName'."
-
-    # 5) Attach the newly copied database
+    # 4) Attach the newly copied database
     Write-Host "Attaching target database '$targetDbName'..."
     Invoke-Sqlcmd -ConnectionString $connectionString -Query "
         CREATE DATABASE [$targetDbName]
@@ -147,6 +122,19 @@ catch {
     Write-Host $_.Exception.Message
 }
 finally {
+    # Ensure the source database is re-attached
+    try {
+        Invoke-Sqlcmd -ConnectionString $connectionString -Query "
+            CREATE DATABASE [$sourceDbName]
+            ON (FILENAME = N'$sourceMdf'),
+               (FILENAME = N'$sourceLdf')
+            FOR ATTACH;
+        " -ErrorAction SilentlyContinue
+        Write-Host "Ensured source database '$sourceDbName' is re-attached."
+    } catch {
+        Write-Host "Failed to re-attach source database '$sourceDbName'."
+    }
+
     # Attempt to set the source DB to multi-user
     try {
         Invoke-Sqlcmd -ConnectionString $connectionString -Query "
